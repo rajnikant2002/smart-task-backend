@@ -4,17 +4,38 @@ import { classifyTask } from "../services/classifier.js";
 // CREATE TASK
 export const createTask = async (req, res) => {
   try {
-    const { title, description } = req.body;
+    const body = req.body || {};
+    const { title, description } = body;
+    const assigned_to = body.assigned_to || body.assignedTo || null;
+    const due_date = body.due_date || body.dueDate || null;
+    const requestedPriority = body.priority;
 
     if (!title) {
       return res.status(400).json({ error: "Title is required" });
     }
 
-    const { category, priority } = classifyTask(description || "");
+    // Use classifier for category and default priority
+    const { category, priority: classifiedPriority } = classifyTask(
+      description || ""
+    );
+
+    // If client sends a priority explicitly, respect it instead of classifier
+    const finalPriority = requestedPriority
+      ? String(requestedPriority).toLowerCase()
+      : classifiedPriority;
 
     const { data, error } = await supabase
       .from("tasks")
-      .insert([{ title, description, category, priority }])
+      .insert([
+        {
+          title,
+          description,
+          category,
+          priority: finalPriority,
+          assigned_to,
+          due_date,
+        },
+      ])
       .select();
 
     if (error) throw error;
@@ -81,10 +102,13 @@ export const updateTask = async (req, res) => {
       "priority",
       "status",
       "assigned_to",
+      "due_date",
     ];
 
     const updates = Object.entries(body).reduce((acc, [key, value]) => {
-      const normalizedKey = key === "assignedTo" ? "assigned_to" : key;
+      let normalizedKey = key;
+      if (key === "assignedTo") normalizedKey = "assigned_to";
+      if (key === "dueDate") normalizedKey = "due_date";
       if (allowedFields.includes(normalizedKey)) {
         acc[normalizedKey] = value;
       }
