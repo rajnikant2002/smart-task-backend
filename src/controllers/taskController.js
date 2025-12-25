@@ -9,15 +9,18 @@ export const createTask = async (req, res) => {
     const assigned_to = body.assigned_to || body.assignedTo || null;
     const due_date = body.due_date || body.dueDate || null;
     const requestedPriority = body.priority;
+    const requestedCategory = body.category;
 
     if (!title) {
       return res.status(400).json({ error: "Title is required" });
     }
 
     // Use classifier for category and default priority
-    const { category, priority: classifiedPriority } = classifyTask(
-      description || ""
-    );
+    const { category: classifiedCategory, priority: classifiedPriority } =
+      classifyTask(description || "");
+
+    // If client sends a category explicitly, respect it instead of classifier
+    const finalCategory = requestedCategory || classifiedCategory;
 
     // If client sends a priority explicitly, respect it instead of classifier
     const finalPriority = requestedPriority
@@ -30,7 +33,7 @@ export const createTask = async (req, res) => {
         {
           title,
           description,
-          category,
+          category: finalCategory,
           priority: finalPriority,
           assigned_to,
           due_date,
