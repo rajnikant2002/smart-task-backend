@@ -1,127 +1,229 @@
 import { supabase } from "../db/supabase.js";
 import { classifyTask } from "../services/classifier.js";
 
+// Error handler helper
+const handleError = (err, res, operation = "Operation") => {
+  console.error(`${operation} error:`, err);
+
+  // Supabase specific errors
+  if (err.code) {
+    switch (err.code) {
+      case "PGRST116":
+        return res.status(404).json({
+          error: "Resource not found",
+          message: "The requested task does not exist",
+        });
+      case "23505": // Unique constraint violation
+        return res.status(409).json({
+          error: "Conflict",
+          message: "A task with this information already exists",
+        });
+      case "23503": // Foreign key violation
+        return res.status(400).json({
+          error: "Invalid reference",
+          message: "Referenced resource does not exist",
+        });
+      case "22P02": // Invalid input syntax
+        return res.status(400).json({
+          error: "Invalid input",
+          message: "One or more fields contain invalid data",
+        });
+      default:
+        return res.status(400).json({
+          error: "Database error",
+          message:
+            err.message || "An error occurred while processing your request",
+        });
+    }
+  }
+
+  // Network or connection errors
+  if (err.message?.includes("fetch") || err.message?.includes("network")) {
+    return res.status(503).json({
+      error: "Service unavailable",
+      message: "Unable to connect to the database. Please try again later.",
+    });
+  }
+
+  // Default error
+  return res.status(500).json({
+    error: "Internal server error",
+    message: err.message || "An unexpected error occurred",
+  });
+};
+
 // CREATE TASK
 export const createTask = async (req, res) => {
   try {
-    const body = req.body || {};
-    const { title, description } = body;
-    const assigned_to = body.assigned_to || body.assignedTo || null;
-    const due_date = body.due_date || body.dueDate || null;
-    const requestedPriority = body.priority;
-    const requestedCategory = body.category;
+    const validatedData = req.validatedData;
+    const { title, description, category, priority, assigned_to, due_date } =
+      validatedData;
 
-    if (!title) {
-      return res.status(400).json({ error: "Title is required" });
-    }
-
-    // Use classifier for category and default priority
+    // Use classifier for category and default priority if not provided
     const { category: classifiedCategory, priority: classifiedPriority } =
       classifyTask(description || "");
 
     // If client sends a category explicitly, respect it instead of classifier
-    const finalCategory = requestedCategory || classifiedCategory;
+    const finalCategory = category || classifiedCategory;
 
     // If client sends a priority explicitly, respect it instead of classifier
-    const finalPriority = requestedPriority
-      ? String(requestedPriority).toLowerCase()
+    const finalPriority = priority
+      ? String(priority).toLowerCase()
       : classifiedPriority;
+
+    const taskData = {
+      title,
+      description: description || null,
+      category: finalCategory,
+      priority: finalPriority,
+      assigned_to: assigned_to || null,
+      due_date: due_date || null,
+    };
 
     const { data, error } = await supabase
       .from("tasks")
-      .insert([
-        {
-          title,
-          description,
-          category: finalCategory,
-          priority: finalPriority,
-          assigned_to,
-          due_date,
-        },
-      ])
+      .insert([taskData])
       .select();
 
-    if (error) throw error;
+    if (error) {
+      return handleError(error, res, "Create task");
+    }
 
-    res.status(201).json(data[0]);
+    if (!data || data.length === 0) {
+      return res.status(500).json({
+        error: "Task creation failed",
+        message: "Task was not created. Please try again.",
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      data: data[0],
+      message: "Task created successfully",
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return handleError(err, res, "Create task");
   }
 };
 
-// GET ALL TASKS
+// GET ALL TASKS with pagination, filtering, and sorting
 export const getTasks = async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from("tasks")
-      .select("*")
-      .order("created_at", { ascending: false });
+    const {
+      limit = 10,
+      offset = 0,
+      sort_by = "created_at",
+      sort_order = "desc",
+      priority,
+      status,
+      category,
+      assigned_to,
+    } = req.validatedQuery || {};
 
-    if (error) throw error;
+    // Build query
+    let query = supabase.from("tasks").select("*", { count: "exact" });
 
-    res.status(200).json(data);
+    // Apply filters
+    if (priority) {
+      query = query.eq("priority", priority.toLowerCase());
+    }
+    if (status) {
+      query = query.eq("status", status.toLowerCase());
+    }
+    if (category) {
+      query = query.eq("category", category);
+    }
+    if (assigned_to) {
+      query = query.eq("assigned_to", assigned_to);
+    }
+
+    // Apply sorting
+    query = query.order(sort_by, { ascending: sort_order === "asc" });
+
+    // Apply pagination
+    query = query.range(offset, offset + limit - 1);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      return handleError(error, res, "Get tasks");
+    }
+
+    res.status(200).json({
+      success: true,
+      data: data || [],
+      pagination: {
+        limit,
+        offset,
+        total: count || 0,
+        hasMore: count ? offset + limit < count : false,
+      },
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return handleError(err, res, "Get tasks");
   }
 };
 
 // GET TASK BY ID
 export const getTaskById = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.validatedParams;
 
     const { data, error } = await supabase
       .from("tasks")
       .select("*")
-      .eq("id", id.trim())
+      .eq("id", id)
       .single();
 
     if (error) {
-      if (error.code === "PGRST116") {
-        return res.status(404).json({ error: "Task not found" });
-      }
-      console.error("Supabase getTaskById error:", error);
-      return res.status(400).json({ error: error.message });
+      return handleError(error, res, "Get task by ID");
     }
 
-    res.status(200).json(data);
+    if (!data) {
+      return res.status(404).json({
+        error: "Task not found",
+        message: `No task found with ID: ${id}`,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data,
+    });
   } catch (err) {
-    console.error("Get task by id failed:", err);
-    res.status(500).json({ error: err.message });
+    return handleError(err, res, "Get task by ID");
   }
 };
 
 // UPDATE TASK
 export const updateTask = async (req, res) => {
   try {
-    const { id } = req.params;
-    const body = req.body || {};
+    const { id } = req.validatedParams;
+    const validatedData = req.validatedData;
 
-    // Only allow known columns to avoid Supabase schema errors (e.g., "assignedTo")
-    const allowedFields = [
-      "title",
-      "description",
-      "category",
-      "priority",
-      "status",
-      "assigned_to",
-      "due_date",
-    ];
-
-    const updates = Object.entries(body).reduce((acc, [key, value]) => {
-      let normalizedKey = key;
-      if (key === "assignedTo") normalizedKey = "assigned_to";
-      if (key === "dueDate") normalizedKey = "due_date";
-      if (allowedFields.includes(normalizedKey)) {
-        acc[normalizedKey] = value;
-      }
-      return acc;
-    }, {});
+    // Normalize field names (camelCase to snake_case)
+    const updates = {};
+    if (validatedData.title !== undefined) updates.title = validatedData.title;
+    if (validatedData.description !== undefined)
+      updates.description = validatedData.description;
+    if (validatedData.category !== undefined)
+      updates.category = validatedData.category;
+    if (validatedData.priority !== undefined) {
+      updates.priority = String(validatedData.priority).toLowerCase();
+    }
+    if (validatedData.status !== undefined) {
+      updates.status = String(validatedData.status).toLowerCase();
+    }
+    if (validatedData.assigned_to !== undefined)
+      updates.assigned_to = validatedData.assigned_to;
+    if (validatedData.due_date !== undefined)
+      updates.due_date = validatedData.due_date;
 
     if (Object.keys(updates).length === 0) {
-      return res
-        .status(400)
-        .json({ error: "No valid fields provided to update" });
+      return res.status(400).json({
+        error: "No updates provided",
+        message: "At least one field must be provided for update",
+      });
     }
 
     updates.updated_at = new Date().toISOString();
@@ -129,39 +231,65 @@ export const updateTask = async (req, res) => {
     const { data, error } = await supabase
       .from("tasks")
       .update(updates)
-      .eq("id", id.trim())
+      .eq("id", id)
       .select()
       .single();
 
     if (error) {
-      // PGRST116 => no rows found with the filter
-      if (error.code === "PGRST116") {
-        return res.status(404).json({ error: "Task not found" });
-      }
-      console.error("Supabase update error:", error);
-      return res.status(400).json({ error: error.message });
+      return handleError(error, res, "Update task");
     }
 
-    res.status(200).json(data);
+    if (!data) {
+      return res.status(404).json({
+        error: "Task not found",
+        message: `No task found with ID: ${id}`,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data,
+      message: "Task updated successfully",
+    });
   } catch (err) {
-    console.error("Update task failed:", err);
-    res.status(500).json({ error: err.message });
+    return handleError(err, res, "Update task");
   }
 };
 
 // DELETE TASK
 export const deleteTask = async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.validatedParams;
+
+    // First check if task exists
+    const { data: existingTask, error: checkError } = await supabase
+      .from("tasks")
+      .select("id")
+      .eq("id", id)
+      .single();
+
+    if (checkError) {
+      return handleError(checkError, res, "Delete task");
+    }
+
+    if (!existingTask) {
+      return res.status(404).json({
+        error: "Task not found",
+        message: `No task found with ID: ${id}`,
+      });
+    }
 
     const { error } = await supabase.from("tasks").delete().eq("id", id);
 
     if (error) {
-      return res.status(404).json({ error: "Task not found" });
+      return handleError(error, res, "Delete task");
     }
 
-    res.status(200).json({ message: "Task deleted successfully" });
+    res.status(200).json({
+      success: true,
+      message: "Task deleted successfully",
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return handleError(err, res, "Delete task");
   }
 };

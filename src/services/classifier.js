@@ -1,5 +1,9 @@
 export function classifyTask(text = ""){
-    const lower = text.toLowerCase();
+    // Handle null, undefined, or non-string inputs
+    if (text === null || text === undefined) {
+        text = "";
+    }
+    const lower = String(text).toLowerCase();
 
     let category = "genral";
     if(lower.includes("meeting") || lower.includes("schedule")){
