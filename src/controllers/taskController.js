@@ -1,5 +1,38 @@
 import { supabase } from "../db/supabase.js";
 import { classifyTask } from "../services/classifier.js";
+import { extractEntities } from "../services/entityExtractor.js";
+import { getSuggestedActions } from "../services/actionSuggestor.js";
+
+// Helper function to log task history
+const logTaskHistory = async (
+  taskId,
+  action,
+  oldValue,
+  newValue,
+  changedBy = "system"
+) => {
+  try {
+    const historyEntry = {
+      task_id: taskId,
+      action: action,
+      old_value: oldValue ? JSON.parse(JSON.stringify(oldValue)) : null,
+      new_value: newValue ? JSON.parse(JSON.stringify(newValue)) : null,
+      changed_by: changedBy,
+      changed_at: new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from("task_history")
+      .insert([historyEntry]);
+
+    if (error) {
+      console.error("Failed to log task history:", error);
+      // Don't throw error - history logging failure shouldn't break the main operation
+    }
+  } catch (err) {
+    console.error("Error logging task history:", err);
+  }
+};
 
 // Error handler helper
 const handleError = (err, res, operation = "Operation") => {
@@ -71,6 +104,12 @@ export const createTask = async (req, res) => {
       ? String(priority).toLowerCase()
       : classifiedPriority;
 
+    // Extract entities from description
+    const extractedEntities = extractEntities(description || "");
+
+    // Get suggested actions based on category
+    const suggestedActions = getSuggestedActions(finalCategory);
+
     const taskData = {
       title,
       description: description || null,
@@ -78,6 +117,8 @@ export const createTask = async (req, res) => {
       priority: finalPriority,
       assigned_to: assigned_to || null,
       due_date: due_date || null,
+      extracted_entities: extractedEntities,
+      suggested_actions: suggestedActions,
     };
 
     const { data, error } = await supabase
@@ -96,9 +137,20 @@ export const createTask = async (req, res) => {
       });
     }
 
+    const createdTask = data[0];
+
+    // Log history for task creation
+    await logTaskHistory(
+      createdTask.id,
+      "created",
+      null,
+      createdTask,
+      req.user?.email || req.headers["x-user-id"] || "system"
+    );
+
     res.status(201).json({
       success: true,
-      data: data[0],
+      data: createdTask,
       message: "Task created successfully",
     });
   } catch (err) {
@@ -169,26 +221,42 @@ export const getTaskById = async (req, res) => {
   try {
     const { id } = req.validatedParams;
 
-    const { data, error } = await supabase
+    // Get task with history
+    const { data: task, error: taskError } = await supabase
       .from("tasks")
       .select("*")
       .eq("id", id)
       .single();
 
-    if (error) {
-      return handleError(error, res, "Get task by ID");
+    if (taskError) {
+      return handleError(taskError, res, "Get task by ID");
     }
 
-    if (!data) {
+    if (!task) {
       return res.status(404).json({
         error: "Task not found",
         message: `No task found with ID: ${id}`,
       });
     }
 
+    // Get task history
+    const { data: history, error: historyError } = await supabase
+      .from("task_history")
+      .select("*")
+      .eq("task_id", id)
+      .order("changed_at", { ascending: false });
+
+    if (historyError) {
+      console.error("Error fetching task history:", historyError);
+      // Continue even if history fetch fails
+    }
+
     res.status(200).json({
       success: true,
-      data,
+      data: {
+        ...task,
+        history: history || [],
+      },
     });
   } catch (err) {
     return handleError(err, res, "Get task by ID");
@@ -200,6 +268,20 @@ export const updateTask = async (req, res) => {
   try {
     const { id } = req.validatedParams;
     const validatedData = req.validatedData;
+
+    // Get current task state for history
+    const { data: oldTask, error: fetchError } = await supabase
+      .from("tasks")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (fetchError || !oldTask) {
+      return res.status(404).json({
+        error: "Task not found",
+        message: `No task found with ID: ${id}`,
+      });
+    }
 
     // Normalize field names (camelCase to snake_case)
     const updates = {};
@@ -246,6 +328,26 @@ export const updateTask = async (req, res) => {
       });
     }
 
+    // Determine action type based on what changed
+    let action = "updated";
+    if (updates.status && updates.status !== oldTask.status) {
+      action = "status_changed";
+    } else if (
+      updates.status === "completed" &&
+      oldTask.status !== "completed"
+    ) {
+      action = "completed";
+    }
+
+    // Log history for task update
+    await logTaskHistory(
+      id,
+      action,
+      oldTask,
+      data,
+      req.user?.email || req.headers["x-user-id"] || "system"
+    );
+
     res.status(200).json({
       success: true,
       data,
@@ -261,10 +363,10 @@ export const deleteTask = async (req, res) => {
   try {
     const { id } = req.validatedParams;
 
-    // First check if task exists
+    // First check if task exists and get full data for history
     const { data: existingTask, error: checkError } = await supabase
       .from("tasks")
-      .select("id")
+      .select("*")
       .eq("id", id)
       .single();
 
@@ -284,6 +386,15 @@ export const deleteTask = async (req, res) => {
     if (error) {
       return handleError(error, res, "Delete task");
     }
+
+    // Log history for task deletion
+    await logTaskHistory(
+      id,
+      "deleted",
+      existingTask,
+      null,
+      req.user?.email || req.headers["x-user-id"] || "system"
+    );
 
     res.status(200).json({
       success: true,
