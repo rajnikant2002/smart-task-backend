@@ -48,6 +48,3 @@ export function getSuggestedActions(category) {
   // Return actions for the category, or default to general
   return actionMap[category?.toLowerCase()] || actionMap.general;
 }
-
-
-

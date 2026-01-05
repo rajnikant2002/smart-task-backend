@@ -266,6 +266,3 @@ function extractActionVerbs(text) {
 
   return actionVerbs;
 }
-
-
-
