@@ -208,6 +208,7 @@ function extractLocations(text) {
 
 /**
  * Extract action verbs from text
+ * Also extracts from person name patterns like "meet with", "call with", etc.
  */
 function extractActionVerbs(text) {
   const actionVerbs = [];
@@ -245,23 +246,104 @@ function extractActionVerbs(text) {
     "train",
     "organize",
     "coordinate",
+    "check",
+    "confirm",
+    "notify",
+    "inform",
+    "report",
+    "follow",
+    "handle",
+    "manage",
+    "process",
+    "execute",
+    "perform",
+    "conduct",
+    "attend",
+    "join",
+    "participate",
+    "assign",
+    "allocate",
+    "distribute",
+    "share",
+    "communicate",
   ];
 
+  // First, extract action verbs from person name patterns
+  // Patterns like "meet with John", "call with team", "discuss with manager"
+  // Also "assign to", "assigned to", "created by"
+  const personPatterns = [
+    {
+      pattern: /\b(\w+)\s+with\s+/gi,
+      description: "verb with person",
+    },
+    {
+      pattern: /\b(\w+)\s+by\s+/gi,
+      description: "verb by person",
+    },
+    {
+      pattern: /\b(\w+)\s+to\s+/gi,
+      description: "verb to person",
+    },
+    {
+      pattern: /\b(\w+ing)\s+with\s+/gi,
+      description: "verb-ing with person",
+    },
+  ];
+
+  personPatterns.forEach(({ pattern }) => {
+    let match;
+    // Reset regex lastIndex to avoid issues
+    pattern.lastIndex = 0;
+    while ((match = pattern.exec(text)) !== null) {
+      const verbCandidate = match[1].toLowerCase().trim();
+
+      // Only check against known action verbs to avoid false positives
+      actionVerbList.forEach((verb) => {
+        const verbLower = verb.toLowerCase();
+
+        // Check base form
+        if (verbCandidate === verbLower) {
+          if (!actionVerbs.includes(verbLower)) {
+            actionVerbs.push(verbLower);
+          }
+        }
+
+        // Check -ing form
+        if (verbCandidate === `${verbLower}ing`) {
+          if (!actionVerbs.includes(verbLower)) {
+            actionVerbs.push(verbLower);
+          }
+        }
+
+        // Check -ed form (for "assigned to", "created by")
+        if (verbCandidate === `${verbLower}ed`) {
+          if (!actionVerbs.includes(verbLower)) {
+            actionVerbs.push(verbLower);
+          }
+        }
+      });
+    }
+  });
+
+  // Then, extract action verbs from general text patterns
   actionVerbList.forEach((verb) => {
-    // Check for verb in various forms
-    const verbPatterns = [
-      new RegExp(`\\b${verb}\\w*\\b`, "gi"),
-      new RegExp(`\\b${verb}ing\\b`, "gi"),
-      new RegExp(`\\b${verb}ed\\b`, "gi"),
+    const verbLower = verb.toLowerCase();
+
+    // Create regex patterns for different verb forms
+    // Use word boundaries to match whole words only
+    const patterns = [
+      new RegExp(`\\b${verbLower}\\b`, "i"), // base form: "meet", "fix"
+      new RegExp(`\\b${verbLower}ing\\b`, "i"), // -ing form: "meeting", "fixing"
+      new RegExp(`\\b${verbLower}ed\\b`, "i"), // -ed form: "met", "fixed"
+      new RegExp(`\\b${verbLower}s\\b`, "i"), // -s form: "meets", "fixes"
     ];
 
-    verbPatterns.forEach((pattern) => {
-      if (pattern.test(text)) {
-        if (!actionVerbs.includes(verb)) {
-          actionVerbs.push(verb);
-        }
-      }
-    });
+    // Check if any pattern matches
+    const found = patterns.some((pattern) => pattern.test(lower));
+
+    if (found && !actionVerbs.includes(verbLower)) {
+      actionVerbs.push(verbLower);
+    }
   });
 
   return actionVerbs;
