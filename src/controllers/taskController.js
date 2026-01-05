@@ -11,6 +11,12 @@ const logTaskHistory = async (
   newValue,
   changedBy = "system"
 ) => {
+  // Validate taskId before attempting to log
+  if (!taskId) {
+    console.error("Cannot log task history: taskId is missing");
+    return;
+  }
+
   try {
     const historyEntry = {
       task_id: taskId,
@@ -222,6 +228,15 @@ export const createTask = async (req, res) => {
 
     const createdTask = data[0];
 
+    // Validate task ID exists before logging history
+    if (!createdTask || !createdTask.id) {
+      console.error("Task created but ID is missing:", createdTask);
+      return res.status(500).json({
+        error: "Task creation failed",
+        message: "Task was created but ID is missing",
+      });
+    }
+
     // Log history for task creation
     await logTaskHistory(
       createdTask.id,
@@ -352,7 +367,9 @@ export const updateTask = async (req, res) => {
     const { id } = req.validatedParams;
     const validatedData = req.validatedData;
 
-    // Get current task state for history
+    // ------------------------------------------------------------------
+    // 1) FETCH EXISTING TASK FROM DB
+    // ------------------------------------------------------------------
     const { data: oldTask, error: fetchError } = await supabase
       .from("tasks")
       .select("*")
@@ -366,16 +383,29 @@ export const updateTask = async (req, res) => {
       });
     }
 
-    // Normalize field names (camelCase to snake_case)
+    // ------------------------------------------------------------------
+    // 2) COMPARE WITH INCOMING REQUEST
+    // ------------------------------------------------------------------
+    const newTitle = validatedData.title ?? oldTask.title;
+    const newDescription = validatedData.description ?? oldTask.description;
+
+    // Check if content (title or description) changed
+    const contentChanged =
+      newTitle !== oldTask.title || newDescription !== oldTask.description;
+
+    // Check if user explicitly overrode category/priority
+    const categoryOverridden = validatedData.category !== undefined;
+    const priorityOverridden = validatedData.priority !== undefined;
+
+    // ------------------------------------------------------------------
+    // 3) DECIDE WHETHER TO RE-CLASSIFY
+    // ------------------------------------------------------------------
     const updates = {};
+
+    // Always update basic fields if provided
     if (validatedData.title !== undefined) updates.title = validatedData.title;
     if (validatedData.description !== undefined)
       updates.description = validatedData.description;
-    if (validatedData.category !== undefined)
-      updates.category = validatedData.category;
-    if (validatedData.priority !== undefined) {
-      updates.priority = String(validatedData.priority).toLowerCase();
-    }
     if (validatedData.status !== undefined) {
       updates.status = String(validatedData.status).toLowerCase();
     }
@@ -384,6 +414,117 @@ export const updateTask = async (req, res) => {
     if (validatedData.due_date !== undefined)
       updates.due_date = validatedData.due_date;
 
+    // ------------------------------------------------------------------
+    // 4) RE-CLASSIFICATION LOGIC (Only if content changed)
+    // ------------------------------------------------------------------
+    if (contentChanged) {
+      // Combine title + description for classification
+      const combinedText = `${newTitle || ""} ${newDescription || ""}`.trim();
+
+      // Run auto-classification
+      const { category: autoCategory, priority: autoPriority } =
+        classifyTask(combinedText);
+
+      // Extract entities
+      let extractedEntities = extractEntities(combinedText);
+
+      // Helper function to extract only date (YYYY-MM-DD) from date string
+      const extractDateOnly = (dateString) => {
+        if (!dateString) return null;
+        try {
+          const date = new Date(dateString);
+          if (isNaN(date.getTime())) return null;
+          return date.toISOString().split("T")[0];
+        } catch (e) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+            return dateString;
+          }
+          return null;
+        }
+      };
+
+      // Enrich with assigned_to and due_date
+      const finalAssignedTo = validatedData.assigned_to ?? oldTask.assigned_to;
+      const finalDueDate = validatedData.due_date ?? oldTask.due_date;
+
+      if (finalAssignedTo) {
+        const assignedToStr = String(finalAssignedTo).trim();
+        if (
+          assignedToStr &&
+          !extractedEntities.persons.includes(assignedToStr)
+        ) {
+          extractedEntities.persons.push(assignedToStr);
+        }
+      }
+
+      if (finalDueDate) {
+        const dateOnly = extractDateOnly(finalDueDate);
+        if (dateOnly && !extractedEntities.dates.includes(dateOnly)) {
+          extractedEntities.dates.push(dateOnly);
+        }
+      }
+
+      // Normalize all dates to date-only format
+      const normalizedDates = (extractedEntities.dates || []).map((dateStr) => {
+        const dateOnly = extractDateOnly(dateStr);
+        if (!dateOnly && typeof dateStr === "string") {
+          const lower = dateStr.toLowerCase();
+          if (
+            ["today", "tomorrow", "yesterday"].includes(lower) ||
+            /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i.test(
+              dateStr
+            )
+          ) {
+            return dateStr;
+          }
+        }
+        return dateOnly || dateStr;
+      });
+
+      const uniqueDates = [
+        ...new Set(normalizedDates.filter((d) => d !== null)),
+      ];
+
+      // Update extracted_entities
+      updates.extracted_entities = {
+        dates: uniqueDates,
+        persons: extractedEntities.persons || [],
+        action_verbs: extractedEntities.action_verbs || [],
+      };
+
+      // Update suggested_actions based on final category
+      const finalCategory = categoryOverridden
+        ? String(validatedData.category).toLowerCase()
+        : autoCategory || "general";
+      updates.suggested_actions = getSuggestedActions(finalCategory);
+
+      // Update category (respect override)
+      if (!categoryOverridden) {
+        updates.category = autoCategory || "general";
+      } else {
+        updates.category = String(validatedData.category).toLowerCase();
+      }
+
+      // Update priority (respect override)
+      if (!priorityOverridden) {
+        updates.priority = autoPriority || "low";
+      } else {
+        updates.priority = String(validatedData.priority).toLowerCase();
+      }
+    } else {
+      // Case A: No content change - only update explicit overrides
+      if (categoryOverridden) {
+        updates.category = String(validatedData.category).toLowerCase();
+      }
+      if (priorityOverridden) {
+        updates.priority = String(validatedData.priority).toLowerCase();
+      }
+      // Keep existing extracted_entities and suggested_actions unchanged
+    }
+
+    // ------------------------------------------------------------------
+    // 5) VALIDATE UPDATES
+    // ------------------------------------------------------------------
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({
         error: "No updates provided",
@@ -393,7 +534,10 @@ export const updateTask = async (req, res) => {
 
     updates.updated_at = new Date().toISOString();
 
-    const { data, error } = await supabase
+    // ------------------------------------------------------------------
+    // 6) SAVE TASK + HISTORY
+    // ------------------------------------------------------------------
+    const { data: updatedTask, error } = await supabase
       .from("tasks")
       .update(updates)
       .eq("id", id)
@@ -404,7 +548,7 @@ export const updateTask = async (req, res) => {
       return handleError(error, res, "Update task");
     }
 
-    if (!data) {
+    if (!updatedTask) {
       return res.status(404).json({
         error: "Task not found",
         message: `No task found with ID: ${id}`,
@@ -427,13 +571,13 @@ export const updateTask = async (req, res) => {
       id,
       action,
       oldTask,
-      data,
+      updatedTask,
       req.user?.email || req.headers["x-user-id"] || "system"
     );
 
     res.status(200).json({
       success: true,
-      data,
+      data: updatedTask,
       message: "Task updated successfully",
     });
   } catch (err) {
