@@ -89,25 +89,108 @@ const handleError = (err, res, operation = "Operation") => {
 export const createTask = async (req, res) => {
   try {
     const validatedData = req.validatedData;
-    const { title, description, category, priority, assigned_to, due_date } =
-      validatedData;
+    const {
+      title,
+      description,
+      category, // Optional override from frontend
+      priority, // Optional override from frontend
+      assigned_to,
+      due_date,
+      // Ignore frontend-provided entities and actions - backend always computes
+    } = validatedData;
 
-    // Use classifier for category and default priority if not provided
+    // ------------------------------------------------------------------
+    // 1) AUTO-CLASSIFICATION (Backend Intelligence)
+    // ------------------------------------------------------------------
+    // Combine title + description for better classification
+    const combinedText = `${title || ""} ${description || ""}`.trim();
+
+    // Backend ALWAYS runs classification
     const { category: classifiedCategory, priority: classifiedPriority } =
-      classifyTask(description || "");
+      classifyTask(combinedText);
 
-    // If client sends a category explicitly, respect it instead of classifier
-    const finalCategory = category || classifiedCategory;
+    // Frontend can override category/priority if explicitly provided
+    // Otherwise, use backend classification
+    const finalCategory = category
+      ? String(category).toLowerCase()
+      : classifiedCategory || "general";
 
-    // If client sends a priority explicitly, respect it instead of classifier
     const finalPriority = priority
       ? String(priority).toLowerCase()
-      : classifiedPriority;
+      : classifiedPriority || "low";
 
-    // Extract entities from description
-    const extractedEntities = extractEntities(description || "");
+    // ------------------------------------------------------------------
+    // 2) ENTITY EXTRACTION (Backend Intelligence)
+    // ------------------------------------------------------------------
+    // Backend ALWAYS extracts entities from title + description
+    let extractedEntities = extractEntities(combinedText);
 
-    // Get suggested actions based on category
+    // Helper function to extract only date (YYYY-MM-DD) from date string
+    const extractDateOnly = (dateString) => {
+      if (!dateString) return null;
+      try {
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return null;
+        // Return YYYY-MM-DD format
+        return date.toISOString().split("T")[0];
+      } catch (e) {
+        // If it's already in YYYY-MM-DD format, return as is
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+          return dateString;
+        }
+        return null;
+      }
+    };
+
+    // Enrich with assigned_to and due_date (user-provided fields)
+    if (assigned_to) {
+      // Add to persons array if not already present
+      const assignedToStr = String(assigned_to).trim();
+      if (assignedToStr && !extractedEntities.persons.includes(assignedToStr)) {
+        extractedEntities.persons.push(assignedToStr);
+      }
+    }
+
+    if (due_date) {
+      // Extract only date part (YYYY-MM-DD) from due_date
+      const dateOnly = extractDateOnly(due_date);
+      if (dateOnly && !extractedEntities.dates.includes(dateOnly)) {
+        extractedEntities.dates.push(dateOnly);
+      }
+    }
+
+    // Normalize all dates in extractedEntities to date-only format (YYYY-MM-DD)
+    const normalizedDates = (extractedEntities.dates || []).map((dateStr) => {
+      const dateOnly = extractDateOnly(dateStr);
+      // If it's a relative date like "today", "tomorrow", keep it as is
+      if (!dateOnly && typeof dateStr === "string") {
+        const lower = dateStr.toLowerCase();
+        if (
+          ["today", "tomorrow", "yesterday"].includes(lower) ||
+          /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i.test(
+            dateStr
+          )
+        ) {
+          return dateStr; // Keep relative dates as is
+        }
+      }
+      return dateOnly || dateStr;
+    });
+
+    // Remove duplicates and filter out nulls
+    const uniqueDates = [...new Set(normalizedDates.filter((d) => d !== null))];
+
+    // Ensure standard shape (no locations, no detected_category)
+    extractedEntities = {
+      dates: uniqueDates,
+      persons: extractedEntities.persons || [],
+      action_verbs: extractedEntities.action_verbs || [],
+    };
+
+    // ------------------------------------------------------------------
+    // 3) SUGGESTED ACTIONS (Backend Intelligence)
+    // ------------------------------------------------------------------
+    // Backend ALWAYS generates suggestions based on final category
     const suggestedActions = getSuggestedActions(finalCategory);
 
     const taskData = {
