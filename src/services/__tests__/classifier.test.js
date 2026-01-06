@@ -21,4 +21,3 @@ describe("classifyTask", () => {
     expect(result.category).toBe("technical");
   });
 });
-
