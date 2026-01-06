@@ -129,6 +129,9 @@ export const createTask = async (req, res) => {
     // 2) ENTITY EXTRACTION (Backend Intelligence)
     // ------------------------------------------------------------------
     // Backend ALWAYS extracts entities from title + description
+    // extracted_entities.persons should ONLY come from description text
+    // (after keywords like "with", "by", "assign to")
+    // assigned_to is a separate field and should NOT affect extraction
     let extractedEntities = extractEntities(combinedText);
 
     // Helper function to extract only date (YYYY-MM-DD) from date string
@@ -148,15 +151,8 @@ export const createTask = async (req, res) => {
       }
     };
 
-    // Prioritize assigned_to if provided, otherwise use extracted persons from text
-    if (assigned_to) {
-      // Use assigned_to as the primary source for persons
-      const assignedToStr = String(assigned_to).trim();
-      if (assignedToStr) {
-        extractedEntities.persons = [assignedToStr];
-      }
-    }
-    // If assigned_to not provided, keep extracted persons from text
+    // DO NOT override extracted persons with assigned_to
+    // extracted_entities.persons should ONLY come from description text
 
     if (due_date) {
       // Extract only date part (YYYY-MM-DD) from due_date
@@ -438,19 +434,10 @@ export const updateTask = async (req, res) => {
         }
       };
 
-      // Enrich with assigned_to and due_date
-      const finalAssignedTo = validatedData.assigned_to ?? oldTask.assigned_to;
+      // DO NOT add assigned_to to extracted_entities.persons
+      // extracted_entities.persons should ONLY come from description text
+      // assigned_to is a separate field and should NOT affect extraction
       const finalDueDate = validatedData.due_date ?? oldTask.due_date;
-
-      if (finalAssignedTo) {
-        const assignedToStr = String(finalAssignedTo).trim();
-        if (
-          assignedToStr &&
-          !extractedEntities.persons.includes(assignedToStr)
-        ) {
-          extractedEntities.persons.push(assignedToStr);
-        }
-      }
 
       if (finalDueDate) {
         const dateOnly = extractDateOnly(finalDueDate);
@@ -463,7 +450,7 @@ export const updateTask = async (req, res) => {
       const normalizedDates = (extractedEntities.dates || []).map((dateStr) => {
         const dateOnly = extractDateOnly(dateStr);
         if (!dateOnly && typeof dateStr === "string") {
-           {
+          {
             return dateStr;
           }
         }

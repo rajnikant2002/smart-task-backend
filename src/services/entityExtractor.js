@@ -74,14 +74,18 @@ function extractDates(text) {
 /**
  * Extract person names from text
  * Looks for names after keywords like "with", "by", "assign to", etc.
- * Note: This is a fallback - assigned_to field takes priority in controller
+ * According to requirements: Person name = word(s) that come immediately after:
+ * - "with"
+ * - "by"
+ * - "assign to"
+ * Note: "Team" is acceptable per requirements
  */
 function extractPersons(text) {
   const persons = [];
 
-  // Patterns to find person names
+  // Patterns to find person names after keywords
   const namePatterns = [
-    /(?:with|by|assign to|assigned to|from|to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g,
+    /(?:with|by|assign to|assigned to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g,
     /(?:meeting with|call with|discuss with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g,
   ];
 
@@ -89,10 +93,9 @@ function extractPersons(text) {
     let match;
     while ((match = pattern.exec(text)) !== null) {
       const name = match[1].trim();
-      // Filter out common false positives
-      if (
-        !["Team", "Client", "Manager", "Department", "Group"].includes(name)
-      ) {
+      // According to requirements, "Team" is acceptable
+      // Only filter out other common false positives
+      if (!["Client", "Manager", "Department", "Group"].includes(name)) {
         persons.push(name);
       }
     }
