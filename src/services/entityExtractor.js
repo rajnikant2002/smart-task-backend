@@ -1,19 +1,17 @@
 /**
  * Extract entities from task description
- * Extracts: dates/times, person names, locations, action verbs
+ * Extracts: dates/times, person names, action verbs
  */
 export function extractEntities(description = "") {
   if (!description || typeof description !== "string") {
     return {
       dates: [],
       persons: [],
-      locations: [],
       action_verbs: [],
     };
   }
 
   const text = description.trim();
-  const lower = text.toLowerCase();
 
   // Extract dates/times
   const dates = extractDates(text);
@@ -21,16 +19,12 @@ export function extractEntities(description = "") {
   // Extract person names (after "with", "by", "assign to", "assigned to")
   const persons = extractPersons(text);
 
-  // Extract locations (common location indicators)
-  const locations = extractLocations(text);
-
   // Extract action verbs
   const actionVerbs = extractActionVerbs(text);
 
   return {
     dates,
     persons,
-    locations,
     action_verbs: actionVerbs,
   };
 }
@@ -40,7 +34,6 @@ export function extractEntities(description = "") {
  */
 function extractDates(text) {
   const dates = [];
-  const lower = text.toLowerCase();
 
   // Common date patterns
   const datePatterns = [
@@ -85,7 +78,6 @@ function extractDates(text) {
  */
 function extractPersons(text) {
   const persons = [];
-  const lower = text.toLowerCase();
 
   // Patterns to find person names
   const namePatterns = [
@@ -107,56 +99,6 @@ function extractPersons(text) {
   });
 
   return [...new Set(persons)];
-}
-
-/**
- * Extract location references from text
- */
-function extractLocations(text) {
-  const locations = [];
-  const lower = text.toLowerCase();
-
-  // Common location indicators
-  const locationKeywords = [
-    "at",
-    "in",
-    "on",
-    "room",
-    "office",
-    "building",
-    "location",
-    "venue",
-    "place",
-  ];
-
-  // Look for capitalized words after location keywords
-  const locationPattern = new RegExp(
-    `(?:${locationKeywords.join("|")})\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)*)`,
-    "gi"
-  );
-
-  let match;
-  while ((match = locationPattern.exec(text)) !== null) {
-    locations.push(match[1].trim());
-  }
-
-  // Common location words
-  const commonLocations = [
-    "conference room",
-    "meeting room",
-    "office",
-    "headquarters",
-    "site",
-    "location",
-  ];
-
-  commonLocations.forEach((loc) => {
-    if (lower.includes(loc)) {
-      locations.push(loc);
-    }
-  });
-
-  return [...new Set(locations)];
 }
 
 /**
@@ -225,25 +167,13 @@ function extractActionVerbs(text) {
   // Patterns like "meet with John", "call with team", "discuss with manager"
   // Also "assign to", "assigned to", "created by"
   const personPatterns = [
-    {
-      pattern: /\b(\w+)\s+with\s+/gi,
-      description: "verb with person",
-    },
-    {
-      pattern: /\b(\w+)\s+by\s+/gi,
-      description: "verb by person",
-    },
-    {
-      pattern: /\b(\w+)\s+to\s+/gi,
-      description: "verb to person",
-    },
-    {
-      pattern: /\b(\w+ing)\s+with\s+/gi,
-      description: "verb-ing with person",
-    },
+    /\b(\w+)\s+with\s+/gi,
+    /\b(\w+)\s+by\s+/gi,
+    /\b(\w+)\s+to\s+/gi,
+    /\b(\w+ing)\s+with\s+/gi,
   ];
 
-  personPatterns.forEach(({ pattern }) => {
+  personPatterns.forEach((pattern) => {
     let match;
     // Reset regex lastIndex to avoid issues
     pattern.lastIndex = 0;
@@ -251,30 +181,21 @@ function extractActionVerbs(text) {
       const verbCandidate = match[1].toLowerCase().trim();
 
       // Only check against known action verbs to avoid false positives
-      actionVerbList.forEach((verb) => {
+      for (const verb of actionVerbList) {
         const verbLower = verb.toLowerCase();
 
-        // Check base form
-        if (verbCandidate === verbLower) {
+        // Check base form, -ing form, or -ed form
+        if (
+          verbCandidate === verbLower ||
+          verbCandidate === `${verbLower}ing` ||
+          verbCandidate === `${verbLower}ed`
+        ) {
           if (!actionVerbs.includes(verbLower)) {
             actionVerbs.push(verbLower);
           }
+          break; // Found match, no need to check other forms
         }
-
-        // Check -ing form
-        if (verbCandidate === `${verbLower}ing`) {
-          if (!actionVerbs.includes(verbLower)) {
-            actionVerbs.push(verbLower);
-          }
-        }
-
-        // Check -ed form (for "assigned to", "created by")
-        if (verbCandidate === `${verbLower}ed`) {
-          if (!actionVerbs.includes(verbLower)) {
-            actionVerbs.push(verbLower);
-          }
-        }
-      });
+      }
     }
   });
 

@@ -171,13 +171,7 @@ export const createTask = async (req, res) => {
       const dateOnly = extractDateOnly(dateStr);
       // If it's a relative date like "today", "tomorrow", keep it as is
       if (!dateOnly && typeof dateStr === "string") {
-        const lower = dateStr.toLowerCase();
-        if (
-          ["today", "tomorrow", "yesterday"].includes(lower) ||
-          /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i.test(
-            dateStr
-          )
-        ) {
+        {
           return dateStr; // Keep relative dates as is
         }
       }
@@ -469,13 +463,7 @@ export const updateTask = async (req, res) => {
       const normalizedDates = (extractedEntities.dates || []).map((dateStr) => {
         const dateOnly = extractDateOnly(dateStr);
         if (!dateOnly && typeof dateStr === "string") {
-          const lower = dateStr.toLowerCase();
-          if (
-            ["today", "tomorrow", "yesterday"].includes(lower) ||
-            /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/i.test(
-              dateStr
-            )
-          ) {
+           {
             return dateStr;
           }
         }
