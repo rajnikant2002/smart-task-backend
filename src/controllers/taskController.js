@@ -148,14 +148,15 @@ export const createTask = async (req, res) => {
       }
     };
 
-    // Enrich with assigned_to and due_date (user-provided fields)
+    // Prioritize assigned_to if provided, otherwise use extracted persons from text
     if (assigned_to) {
-      // Add to persons array if not already present
+      // Use assigned_to as the primary source for persons
       const assignedToStr = String(assigned_to).trim();
-      if (assignedToStr && !extractedEntities.persons.includes(assignedToStr)) {
-        extractedEntities.persons.push(assignedToStr);
+      if (assignedToStr) {
+        extractedEntities.persons = [assignedToStr];
       }
     }
+    // If assigned_to not provided, keep extracted persons from text
 
     if (due_date) {
       // Extract only date part (YYYY-MM-DD) from due_date

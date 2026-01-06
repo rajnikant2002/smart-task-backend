@@ -81,6 +81,7 @@ function extractDates(text) {
 /**
  * Extract person names from text
  * Looks for names after keywords like "with", "by", "assign to", etc.
+ * Note: This is a fallback - assigned_to field takes priority in controller
  */
 function extractPersons(text) {
   const persons = [];
@@ -101,54 +102,6 @@ function extractPersons(text) {
         !["Team", "Client", "Manager", "Department", "Group"].includes(name)
       ) {
         persons.push(name);
-      }
-    }
-  });
-
-  // Also look for capitalized words that might be names (simple heuristic)
-  const capitalizedWords = text.match(/\b[A-Z][a-z]+\b/g) || [];
-  capitalizedWords.forEach((word) => {
-    // Skip common non-name words
-    const skipWords = [
-      "Schedule",
-      "Meeting",
-      "Task",
-      "Today",
-      "Tomorrow",
-      "Monday",
-      "Tuesday",
-      "Wednesday",
-      "Thursday",
-      "Friday",
-      "Saturday",
-      "Sunday",
-      "January",
-      "February",
-      "March",
-      "April",
-      "May",
-      "June",
-      "July",
-      "August",
-      "September",
-      "October",
-      "November",
-      "December",
-    ];
-    if (!skipWords.includes(word) && word.length > 2) {
-      // Check if it appears near name indicators
-      const wordIndex = text.indexOf(word);
-      const context = text
-        .substring(Math.max(0, wordIndex - 20), wordIndex + word.length + 20)
-        .toLowerCase();
-      if (
-        context.includes("with ") ||
-        context.includes("by ") ||
-        context.includes("assign")
-      ) {
-        if (!persons.includes(word)) {
-          persons.push(word);
-        }
       }
     }
   });
