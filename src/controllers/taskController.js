@@ -131,7 +131,6 @@ export const createTask = async (req, res) => {
     // Backend ALWAYS extracts entities from title + description
     // extracted_entities.persons should ONLY come from description text
     // (after keywords like "with", "by", "assign to")
-    // assigned_to is a separate field and should NOT affect extraction
     let extractedEntities = extractEntities(combinedText);
 
     // Helper function to extract only date (YYYY-MM-DD) from date string
