@@ -6,6 +6,7 @@ import taskRoutes from "./routes/taskRoutes.js";
 dotenv.config();
 
 const app= express();
+// Allow Flutter to make requests to the backend
 app.use(cors());
 app.use(express.json());
 
