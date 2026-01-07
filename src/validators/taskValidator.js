@@ -164,6 +164,7 @@ export const getTasksQuerySchema = z.object({
   status: statusEnum.optional(),
   category: z.string().max(50).optional(),
   assigned_to: z.string().max(100).optional(),
+  search: z.string().max(200).optional(),
 });
 
 // Task ID parameter validation schema

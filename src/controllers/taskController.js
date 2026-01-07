@@ -258,10 +258,20 @@ export const getTasks = async (req, res) => {
       status,
       category,
       assigned_to,
+      search,
     } = req.validatedQuery || {};
 
     // Build query
     let query = supabase.from("tasks").select("*", { count: "exact" });
+
+    // Apply text search FIRST (before other filters)
+    if (search && search.trim()) {
+      const searchTerm = search.trim();
+      // Use or() with ilike for case-insensitive search on title and description
+      query = query.or(
+        `title.ilike.%${searchTerm}%,description.ilike.%${searchTerm}%`
+      );
+    }
 
     // Apply filters
     if (priority) {
